@@ -3,7 +3,6 @@ import 'package:alarm/alarm.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-
 class ExampleAlarmEditScreen extends StatefulWidget {
   const ExampleAlarmEditScreen({super.key, this.alarmSettings});
 
@@ -24,21 +23,25 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
   late double? volume;
   late String assetAudio;
   late List<bool> selectedDays;
-
+  bool get areAllDaysSelected => selectedDays.every((day) => day);
+  bool get areSomeDaysSelected => selectedDays.any((day) => day) && !areAllDaysSelected;
   @override
   void initState() {
     super.initState();
     creating = widget.alarmSettings == null;
 
     if (creating) {
-      id = DateTime.now().millisecondsSinceEpoch % 10000 + 1;
-      selectedDateTime = DateTime.now().add(const Duration(minutes: 1));
-      selectedDateTime = selectedDateTime.copyWith(second: 0, millisecond: 0);
+      // Generate a base ID that's divisible by 10
+      id = (DateTime.now().millisecondsSinceEpoch % 100000) ~/ 10 * 10;
+      selectedDateTime = DateTime.now()
+          .add(const Duration(minutes: 1))
+          .copyWith(second: 0, millisecond: 0);
       loopAudio = true;
       vibrate = true;
       volume = null;
       assetAudio = 'assets/marimba.mp3';
       selectedDays = List.filled(7, false);
+      print('[INIT] Creating new alarm with id: $id');
     } else {
       selectedDateTime = widget.alarmSettings!.dateTime;
       loopAudio = widget.alarmSettings!.loopAudio;
@@ -46,12 +49,15 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
       volume = widget.alarmSettings!.volume;
       assetAudio = widget.alarmSettings!.assetAudioPath;
       selectedDays = List.filled(7, false);
+      print(
+        '[INIT] Editing existing alarm with id: ${widget.alarmSettings!.id}',
+      );
 
-      // ✅ Ensure selected days are loaded correctly
       loadSelectedDays().then((days) {
         if (mounted) {
           setState(() {
             selectedDays = days;
+            print('[LOAD] Loaded selectedDays from prefs: $selectedDays');
           });
         }
       });
@@ -59,27 +65,42 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
   }
 
 
-  // Save selected days to SharedPreferences
-  Future<void> saveSelectedDays(List<bool> selectedDays) async {
-    final prefs = await SharedPreferences.getInstance();
-    final selectedDaysString = selectedDays.map((day) => day ? '1' : '0').join();
-    await prefs.setString('selectedDays_${widget.alarmSettings?.id}', selectedDaysString);
+  void toggleAllDays(bool? value) {
+    setState(() {
+      if (value != null) {
+        selectedDays = List.filled(7, value);
+        print('[SELECT ALL] Set all days to $value');
+      }
+    });
   }
 
+  void updateSelectAllState(int index, bool? value) {
+    setState(() {
+      selectedDays[index] = value ?? false;
+      print('[CHECKBOX] Updated day $index to $value');
+    });
+  }
 
-  // Load selected days from SharedPreferences
+  Future<void> saveSelectedDays(int alarmId, List<bool> selectedDays) async {
+    final prefs = await SharedPreferences.getInstance();
+    final selectedDaysString =
+        selectedDays.map((day) => day ? '1' : '0').join();
+    await prefs.setString('selectedDays_$alarmId', selectedDaysString);
+    print('[SAVE] Saved selectedDays for alarm $alarmId: $selectedDaysString');
+    print('[SAVE] Full prefs: ${prefs.getKeys()}'); // Debug all stored keys
+  }
+
   Future<List<bool>> loadSelectedDays() async {
     final prefs = await SharedPreferences.getInstance();
-    final selectedDaysString = prefs.getString('selectedDays_${widget.alarmSettings?.id}');
-
+    final selectedDaysString = prefs.getString(
+      'selectedDays_${widget.alarmSettings?.id}',
+    );
     if (selectedDaysString != null) {
+      print('[LOAD] Found selectedDays string in prefs: $selectedDaysString');
       return selectedDaysString.split('').map((day) => day == '1').toList();
     }
-
-    // Default: No days selected
     return List.filled(7, false);
   }
-
 
   Future<void> pickTime() async {
     final res = await showTimePicker(
@@ -100,6 +121,7 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
         if (selectedDateTime.isBefore(now)) {
           selectedDateTime = selectedDateTime.add(const Duration(days: 1));
         }
+        print('[PICK TIME] New selected time: $selectedDateTime');
       });
     }
   }
@@ -108,84 +130,82 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
     if (loading) return;
     setState(() => loading = true);
 
+    // Use the same ID generation logic as in initState
+    final alarmId = creating
+        ? (DateTime.now().millisecondsSinceEpoch % 100000) ~/ 10 * 10
+        : widget.alarmSettings!.id;
 
+    await saveSelectedDays(alarmId, selectedDays);
 
-    // Create a single alarm that repeats on selected days
+    final now = DateTime.now();
+    DateTime? nextAlarmDateTime;
+
+    // Check today first if selected
+    int todayIndex = now.weekday % 7; // 0=Sun, 1=Mon, ..., 6=Sat
+    if (selectedDays[todayIndex]) {
+      final todayCandidate = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        selectedDateTime.hour,
+        selectedDateTime.minute,
+      );
+      if (todayCandidate.isAfter(now)) {
+        nextAlarmDateTime = todayCandidate;
+      }
+    }
+
+    // If today doesn't work or isn't selected, find next selected day
+    if (nextAlarmDateTime == null) {
+      for (int i = 1; i <= 7; i++) {
+        final futureDate = now.add(Duration(days: i));
+        final dayIndex = futureDate.weekday % 7;
+        if (selectedDays[dayIndex]) {
+          nextAlarmDateTime = DateTime(
+            futureDate.year,
+            futureDate.month,
+            futureDate.day,
+            selectedDateTime.hour,
+            selectedDateTime.minute,
+          );
+          break;
+        }
+      }
+    }
+
+    if (nextAlarmDateTime == null) {
+      print('[SCHEDULE] No valid alarm date found');
+      setState(() => loading = false);
+      return;
+    }
+
     final alarmSettings = AlarmSettings(
-      id: widget.alarmSettings?.id ?? DateTime.now().millisecondsSinceEpoch % 10000 + 1,
-      dateTime: selectedDateTime,
+      id: alarmId,
+      dateTime: nextAlarmDateTime,
       loopAudio: loopAudio,
       vibrate: vibrate,
       volume: volume,
       assetAudioPath: assetAudio,
       notificationSettings: NotificationSettings(
-        title: 'Alarm example',
+        title: 'Alarm',
         body: 'Your alarm is ringing',
         stopButton: 'Stop the alarm',
         icon: 'notification_icon',
       ),
     );
 
-    // Save the selected days
-    await saveSelectedDays(selectedDays);
+    await Alarm.set(alarmSettings: alarmSettings);
+    print('[SCHEDULE] Next alarm set for: $nextAlarmDateTime with ID: $alarmId');
 
-    // Schedule the alarm
-    final res = await Alarm.set(alarmSettings: alarmSettings);
-    if (res && mounted) {
-      Navigator.pop(context, true);
-    }
-
+    if (mounted) Navigator.pop(context, true);
     setState(() => loading = false);
   }
-  // void saveAlarm() async {
-  //   if (loading) return;
-  //   setState(() => loading = true);
-  //
-  //   // Save the selected days
-  //   await saveSelectedDays(selectedDays);
-  //
-  //   final now = DateTime.now();
-  //   final baseId = DateTime.now().millisecondsSinceEpoch % 10000;
-  //
-  //   for (int i = 0; i < 7; i++) {
-  //     if (!selectedDays[i]) continue;
-  //
-  //     // Calculate the next occurrence of the selected day
-  //     int weekday = i + 1; // DateTime weekday is from 1 (Mon) to 7 (Sun)
-  //     DateTime nextAlarmDateTime = selectedDateTime;
-  //
-  //     // Adjust to match the selected weekday
-  //     int currentWeekday = nextAlarmDateTime.weekday;
-  //     int daysUntil = (weekday - currentWeekday) % 7;
-  //     if (daysUntil == 0 && nextAlarmDateTime.isBefore(now)) {
-  //       daysUntil = 7;
-  //     }
-  //     nextAlarmDateTime = nextAlarmDateTime.add(Duration(days: daysUntil));
-  //
-  //     final alarmSettings = AlarmSettings(
-  //       id: baseId + i,
-  //       dateTime: nextAlarmDateTime,
-  //       loopAudio: loopAudio,
-  //       vibrate: vibrate,
-  //       volume: volume,
-  //       assetAudioPath: assetAudio,
-  //       notificationSettings: NotificationSettings(
-  //         title: 'Alarm',
-  //         body: 'Your alarm is ringing',
-  //         stopButton: 'Stop the alarm',
-  //         icon: 'notification_icon',
-  //       ),
-  //     );
-  //
-  //     await Alarm.set(alarmSettings: alarmSettings);
-  //   }
-  //
-  //   if (mounted) Navigator.pop(context, true);
-  //   setState(() => loading = false);
-  // }
 
   void deleteAlarm() {
     Alarm.stop(widget.alarmSettings!.id).then((res) {
+      print(
+        '[DELETE] Deleted alarm with id: ${widget.alarmSettings!.id}, result: $res',
+      );
       if (res && mounted) Navigator.pop(context, true);
     });
   }
@@ -197,6 +217,7 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          // Top Buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -204,26 +225,26 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
                 onPressed: () => Navigator.pop(context, false),
                 child: Text(
                   'Cancel',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge!
-                      .copyWith(color: Colors.blueAccent),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge!.copyWith(color: Colors.blueAccent),
                 ),
               ),
               TextButton(
                 onPressed: saveAlarm,
-                child: loading
-                    ? const CircularProgressIndicator()
-                    : Text(
-                  'Save',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge!
-                      .copyWith(color: Colors.blueAccent),
-                ),
+                child:
+                    loading
+                        ? const CircularProgressIndicator()
+                        : Text(
+                          'Save',
+                          style: Theme.of(context).textTheme.titleLarge!
+                              .copyWith(color: Colors.blueAccent),
+                        ),
               ),
             ],
           ),
+
+          // Time Picker
           RawMaterialButton(
             onPressed: pickTime,
             fillColor: Colors.grey[200],
@@ -231,13 +252,50 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
               margin: const EdgeInsets.all(20),
               child: Text(
                 TimeOfDay.fromDateTime(selectedDateTime).format(context),
-                style: Theme.of(context)
-                    .textTheme
-                    .displayMedium!
-                    .copyWith(color: Colors.blueAccent),
+                style: Theme.of(
+                  context,
+                ).textTheme.displayMedium!.copyWith(color: Colors.blueAccent),
               ),
             ),
           ),
+
+          // Select All checkbox
+          Row(
+            children: [
+              Text('Select All'),
+              Checkbox(
+                value: areAllDaysSelected,
+                tristate: true,
+                onChanged: toggleAllDays,
+              ),
+            ],
+          ),
+          // Weekday Checkboxes
+          // Row(
+          //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          //   children: List.generate(7, (index) {
+          //     final dayName =
+          //         ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][index];
+          //     return Expanded(
+          //       child: Column(
+          //         children: [
+          //           Text(dayName),
+          //           Checkbox(
+          //             value: selectedDays[index],
+          //             onChanged: (value) {
+          //               setState(() {
+          //                 selectedDays[index] = value!;
+          //                 print('[CHECKBOX] Toggled $dayName to $value');
+          //               });
+          //             },
+          //           ),
+          //         ],
+          //       ),
+          //     );
+          //   }),
+          // ),
+
+          /// Individual day checkboxes
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: List.generate(7, (index) {
@@ -247,18 +305,15 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
                   children: [
                     Text(dayName),
                     Checkbox(
-                      value: selectedDays[index], // Reflect the saved state
-                      onChanged: (value) {
-                        setState(() {
-                          selectedDays[index] = value!;
-                        });
-                      },
+                      value: selectedDays[index],
+                      onChanged: (value) => updateSelectAllState(index, value),
                     ),
                   ],
                 ),
               );
             }),
           ),
+          // Loop, Vibrate, Sound
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -275,10 +330,7 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Vibrate',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('Vibrate', style: Theme.of(context).textTheme.titleMedium),
               Switch(
                 value: vibrate,
                 onChanged: (value) => setState(() => vibrate = value),
@@ -288,10 +340,7 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Sound',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('Sound', style: Theme.of(context).textTheme.titleMedium),
               DropdownButton(
                 value: assetAudio,
                 items: const [
@@ -316,10 +365,15 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
                     child: Text('One Piece'),
                   ),
                 ],
-                onChanged: (value) => setState(() => assetAudio = value!),
+                onChanged: (value) {
+                  setState(() => assetAudio = value!);
+                  print('[AUDIO] Selected sound: $assetAudio');
+                },
               ),
             ],
           ),
+
+          // Volume
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -329,8 +383,12 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
               ),
               Switch(
                 value: volume != null,
-                onChanged: (value) =>
-                    setState(() => volume = value ? 0.5 : null),
+                onChanged: (value) {
+                  setState(() => volume = value ? 0.5 : null);
+                  print(
+                    '[VOLUME] Custom volume ${value ? "enabled" : "disabled"}',
+                  );
+                },
               ),
             ],
           ),
@@ -352,23 +410,26 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
                       value: volume!,
                       onChanged: (value) {
                         setState(() => volume = value);
+                        print('[SLIDER] Volume set to $volume');
                       },
                     ),
                   ),
                 ],
               ),
             ),
+
+          // Delete
           if (!creating)
             TextButton(
               onPressed: deleteAlarm,
               child: Text(
                 'Delete Alarm',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium!
-                    .copyWith(color: Colors.red),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium!.copyWith(color: Colors.red),
               ),
             ),
+
           const SizedBox(),
         ],
       ),

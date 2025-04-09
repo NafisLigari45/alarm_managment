@@ -59,21 +59,6 @@ class _ExampleAlarmHomeScreenState extends State<ExampleAlarmHomeScreen> {
     loadAlarms();
   }
 
-  // Future<void> navigateToRingScreen(AlarmSettings alarmSettings) async {
-  //   await Navigator.push(
-  //     context,
-  //     MaterialPageRoute<void>(
-  //       builder: (context) => ExampleAlarmRingScreen(alarmSettings: alarmSettings),
-  //     ),
-  //   );
-  //
-  //   // Automatically reschedule for next week
-  //   DateTime nextWeek = alarmSettings.dateTime.add(const Duration(days: 7));
-  //   final newAlarm = alarmSettings.copyWith(dateTime: nextWeek);
-  //   await Alarm.set(alarmSettings: newAlarm);
-  //
-  //   loadAlarms();
-  // }
 
   Future<void> navigateToAlarmScreen(AlarmSettings? settings) async {
     final res = await showModalBottomSheet<bool?>(

@@ -7,36 +7,69 @@ class ExampleAlarmRingScreen extends StatelessWidget {
 
   final AlarmSettings alarmSettings;
 
+
   Future<List<bool>> _loadSelectedDays() async {
     final prefs = await SharedPreferences.getInstance();
+    // Just use the alarm ID directly (no need for base ID extraction)
     final savedDays = prefs.getString('selectedDays_${alarmSettings.id}');
 
     if (savedDays != null) {
+      print('[LOAD] Found selectedDays for alarm ${alarmSettings.id}: $savedDays');
       return savedDays.split('').map((e) => e == '1').toList();
     }
-    return List.filled(7, false); // Default: No days selected
+    print('[LOAD] No selectedDays found for alarm ${alarmSettings.id}');
+    return List.filled(7, false);
   }
 
   void _scheduleNextAlarm() async {
     final now = DateTime.now();
     final selectedDays = await _loadSelectedDays();
 
-    if (!selectedDays.contains(true)) return; // No selected days, stop alarm.
+    if (!selectedDays.contains(true)) {
+      print('[SCHEDULE] No days selected - not rescheduling');
+      return;
+    }
+    // Find the next selected day (including today if it's selected)
+    DateTime? nextAlarmDate;
 
-    int nextDayOffset = 1;
-    while (!selectedDays[(now.weekday - 1 + nextDayOffset) % 7]) {
-      nextDayOffset++;
+    // Check if today is selected and the alarm time is still in the future today
+    int todayIndex = now.weekday % 7; // 0=Sun, 1=Mon, ..., 6=Sat
+    if (selectedDays[todayIndex]) {
+      final todayAlarm = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        alarmSettings.dateTime.hour,
+        alarmSettings.dateTime.minute,
+      );
+      if (todayAlarm.isAfter(now)) {
+        nextAlarmDate = todayAlarm;
+      }
     }
 
-    final nextAlarmTime = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      alarmSettings.dateTime.hour,
-      alarmSettings.dateTime.minute,
-    ).add(Duration(days: nextDayOffset));
+    // If today isn't selected or the time has passed, find the next selected day
+    if (nextAlarmDate == null) {
+      for (int i = 1; i <= 7; i++) {
+        final futureDate = now.add(Duration(days: i));
+        final dayIndex = futureDate.weekday % 7;
+        if (selectedDays[dayIndex]) {
+          nextAlarmDate = DateTime(
+            futureDate.year,
+            futureDate.month,
+            futureDate.day,
+            alarmSettings.dateTime.hour,
+            alarmSettings.dateTime.minute,
+          );
+          break;
+        }
+      }
+    }
 
-    Alarm.set(alarmSettings: alarmSettings.copyWith(dateTime: nextAlarmTime));
+    if (nextAlarmDate != null) {
+      final newAlarm = alarmSettings.copyWith(dateTime: nextAlarmDate);
+      await Alarm.set(alarmSettings: newAlarm);
+      print('[RE-SCHEDULE] Alarm rescheduled for: $nextAlarmDate');
+    }
   }
 
   @override
