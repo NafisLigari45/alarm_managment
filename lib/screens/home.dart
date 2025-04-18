@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:alarm/alarm.dart';
 import 'package:alarm_management/screens/ring.dart';
 import 'package:alarm_management/screens/shortcut_button.dart';
 
@@ -8,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 
+import '../alarm.dart';
+import '../model/alarm_settings.dart';
 import '../services/permission.dart';
 import '../widgets/tile.dart';
 import 'edit_alarm.dart';

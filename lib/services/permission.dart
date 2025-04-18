@@ -1,5 +1,6 @@
-import 'package:alarm/alarm.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+import '../alarm.dart';
 
 class AlarmPermissions {
   static Future<void> checkNotificationPermission() async {

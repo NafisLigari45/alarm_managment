@@ -1,7 +1,10 @@
 import 'dart:io';
 
-import 'package:alarm/alarm.dart';
 import 'package:flutter/material.dart';
+
+import '../alarm.dart';
+import '../model/alarm_settings.dart';
+import '../model/notification_settings.dart';
 
 class ExampleAlarmHomeShortcutButton extends StatefulWidget {
   const ExampleAlarmHomeShortcutButton({
